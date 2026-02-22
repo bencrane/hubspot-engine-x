@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app import db
 from app.config import settings
-from app.routers import admin, auth, clients, tokens, users
+from app.routers import admin, auth, clients, connections, tokens, users
 
 
 @asynccontextmanager
@@ -26,6 +26,7 @@ app = FastAPI(
 app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(clients.router)
+app.include_router(connections.router)
 app.include_router(users.router)
 app.include_router(tokens.router)
 
