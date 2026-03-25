@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app import db
 from app.config import settings
-from app.routers import admin, auth, clients, connections, tokens, users
+from app.routers import admin, auth, clients, connections, crm, field_mappings, push, tokens, users
 
 
 @asynccontextmanager
@@ -29,9 +29,12 @@ app.include_router(clients.router)
 app.include_router(connections.router)
 app.include_router(users.router)
 app.include_router(tokens.router)
+app.include_router(crm.router)
+app.include_router(field_mappings.router)
+app.include_router(push.router)
 
 
-@app.get("/health")
+@app.get("/health", response_model=None)
 async def health() -> dict[str, str] | JSONResponse:
     try:
         pool = db.get_pool()
