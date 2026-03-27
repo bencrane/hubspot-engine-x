@@ -34,7 +34,11 @@ def _raise_nango_api_error(exc: httpx.HTTPStatusError) -> None:
     raise NangoAPIError(status_code=response.status_code, code=code, message=message) from None
 
 
-async def create_connect_session(connection_id: str, org_id: str) -> dict:
+async def create_connect_session(
+    connection_id: str,
+    org_id: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> dict:
     url = f"{settings.NANGO_BASE_URL}/connect/sessions"
     payload = {
         "tags": {
@@ -44,7 +48,7 @@ async def create_connect_session(connection_id: str, org_id: str) -> dict:
         "allowed_integrations": [settings.NANGO_PROVIDER_CONFIG_KEY],
     }
 
-    async with httpx.AsyncClient() as client:
+    async def _do(client: httpx.AsyncClient) -> dict:
         response = await client.post(
             url,
             json=payload,
@@ -54,15 +58,22 @@ async def create_connect_session(connection_id: str, org_id: str) -> dict:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             _raise_nango_api_error(exc)
+        return dict(response.json().get("data", {}))
 
-    return dict(response.json().get("data", {}))
+    if http_client is not None:
+        return await _do(http_client)
+    async with httpx.AsyncClient() as client:
+        return await _do(client)
 
 
-async def get_connection(connection_id: str) -> dict:
+async def get_connection(
+    connection_id: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> dict:
     url = f"{settings.NANGO_BASE_URL}/connections/{connection_id}"
     params = {"provider_config_key": settings.NANGO_PROVIDER_CONFIG_KEY}
 
-    async with httpx.AsyncClient() as client:
+    async def _do(client: httpx.AsyncClient) -> dict:
         response = await client.get(
             url,
             params=params,
@@ -72,12 +83,19 @@ async def get_connection(connection_id: str) -> dict:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             _raise_nango_api_error(exc)
+        return dict(response.json())
 
-    return dict(response.json())
+    if http_client is not None:
+        return await _do(http_client)
+    async with httpx.AsyncClient() as client:
+        return await _do(client)
 
 
-async def get_valid_token(connection_id: str) -> str:
-    connection = await get_connection(connection_id)
+async def get_valid_token(
+    connection_id: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> str:
+    connection = await get_connection(connection_id, http_client=http_client)
     credentials = connection.get("credentials", {})
     access_token = credentials.get("access_token")
     if not access_token:
@@ -89,11 +107,14 @@ async def get_valid_token(connection_id: str) -> str:
     return str(access_token)
 
 
-async def delete_connection(connection_id: str) -> None:
+async def delete_connection(
+    connection_id: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> None:
     url = f"{settings.NANGO_BASE_URL}/connections/{connection_id}"
     params = {"provider_config_key": settings.NANGO_PROVIDER_CONFIG_KEY}
 
-    async with httpx.AsyncClient() as client:
+    async def _do(client: httpx.AsyncClient) -> None:
         response = await client.delete(
             url,
             params=params,
@@ -103,3 +124,9 @@ async def delete_connection(connection_id: str) -> None:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             _raise_nango_api_error(exc)
+
+    if http_client is not None:
+        await _do(http_client)
+    else:
+        async with httpx.AsyncClient() as client:
+            await _do(client)

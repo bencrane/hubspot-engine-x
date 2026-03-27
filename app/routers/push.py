@@ -52,6 +52,7 @@ async def push_records(
             object_type=request.object_type,
             records=request.records,
             id_property=request.id_property,
+            idempotency_key=request.idempotency_key,
         )
     except HubSpotAPIError as exc:
         raise _hubspot_as_bad_gateway(exc) from None
@@ -88,6 +89,7 @@ async def push_update(
             pushed_by=auth.user_id,
             object_type=request.object_type,
             updates=updates,
+            idempotency_key=request.idempotency_key,
         )
     except HubSpotAPIError as exc:
         raise _hubspot_as_bad_gateway(exc) from None
@@ -132,6 +134,7 @@ async def push_link(
             from_object_type=request.from_object_type,
             to_object_type=request.to_object_type,
             associations=associations,
+            idempotency_key=request.idempotency_key,
         )
     except HubSpotAPIError as exc:
         raise _hubspot_as_bad_gateway(exc) from None
