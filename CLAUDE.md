@@ -245,21 +245,28 @@ All tenant-scoped tables have `org_id` with NOT NULL constraint, foreign key, in
 hubspot-engine-x/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI app, lifespan (db pool), mount routers
+│   ├── main.py              # FastAPI app, lifespan (db pool + httpx), mount routers, CORS, logging
 │   ├── config.py             # Pydantic Settings from env vars
-│   ├── db.py                 # asyncpg connection pool (init/close/get)
+│   ├── db.py                 # asyncpg connection pool (init/close/get, tuned)
 │   ├── auth/
 │   │   ├── __init__.py
 │   │   ├── context.py        # AuthContext dataclass, ROLE_PERMISSIONS
-│   │   └── dependencies.py   # get_current_auth, validate_client_access
+│   │   ├── dependencies.py   # get_current_auth, validate_client_access
+│   │   └── passwords.py      # bcrypt hash/verify
+│   ├── middleware/
+│   │   ├── __init__.py
+│   │   └── logging.py        # Structured logging, correlation IDs, audit log
 │   ├── models/
 │   │   ├── __init__.py
+│   │   ├── admin.py
+│   │   ├── auth.py
+│   │   ├── clients.py
 │   │   ├── connections.py
-│   │   ├── topology.py
-│   │   ├── conflicts.py
-│   │   ├── deployments.py
+│   │   ├── crm.py
 │   │   ├── field_mappings.py
-│   │   └── push.py
+│   │   ├── push.py
+│   │   ├── tokens.py
+│   │   └── users.py
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── admin.py           # Super-admin: org + user creation
@@ -268,37 +275,31 @@ hubspot-engine-x/
 │   │   ├── users.py           # User management
 │   │   ├── tokens.py          # API token lifecycle
 │   │   ├── connections.py     # OAuth connections via Nango
-│   │   ├── topology.py        # Topology pull + snapshots
-│   │   ├── conflicts.py       # Conflict check + retrieval
-│   │   ├── deploy.py          # Deploy custom objects/properties + rollback
+│   │   ├── crm.py             # CRM read operations (search, list, get, batch-read, associations, pipelines, lists)
 │   │   ├── field_mappings.py  # Field mapping CRUD
-│   │   ├── push.py            # Record upserts via Batch API
-│   │   └── workflows.py       # Workflow management
+│   │   └── push.py            # Record upserts via Batch API
 │   └── services/
 │       ├── __init__.py
-│       ├── hubspot.py         # HubSpot CRM API calls
+│       ├── hubspot.py         # HubSpot CRM API calls (rate limiting, retry, token caching)
 │       ├── token_manager.py   # Nango client (get token, create session, delete)
-│       ├── conflict_checker.py # Pre-deploy conflict analysis
-│       ├── deploy_service.py  # Custom object/property deployment + rollback
-│       └── push_service.py    # Batch API record upserts with field mapping
+│       └── push_service.py    # Batch API record upserts with field mapping + idempotency
 ├── supabase/
 │   └── migrations/
-│       └── 001_initial_schema.sql
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── API.md
-│   ├── system_overview.md
-│   ├── strategic_directive.md
-│   ├── chief_agent_directive.md
-│   └── writing_executor_directives.md
+│       └── 002_push_idempotency.sql
 ├── tests/
-│   └── __init__.py
+│   ├── conftest.py
+│   ├── test_auth.py
+│   ├── test_endpoints.py
+│   ├── test_hubspot_service.py
+│   ├── test_push_service.py
+│   └── test_crm_router.py
 ├── .env.example
 ├── .gitignore
 ├── Dockerfile
 ├── railway.toml
 ├── requirements.txt
 ├── README.md
+├── PROJECT_STATUS.md
 └── CLAUDE.md
 ```
 
@@ -317,6 +318,7 @@ HUBSPOT_CLIENT_SECRET=<hubspot-app-client-secret>
 NANGO_SECRET_KEY=<nango-api-secret-key>
 NANGO_BASE_URL=https://api.nango.dev
 NANGO_PROVIDER_CONFIG_KEY=hubspot
+ALLOWED_ORIGINS=<comma-separated-cors-origins>
 ```
 
 ---
