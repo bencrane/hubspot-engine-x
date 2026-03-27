@@ -42,19 +42,17 @@ async def set_field_mapping(
     await validate_client_access(auth, str(request.client_id), get_pool())
 
     org_id = uuid.UUID(auth.org_id)
-    transform_json = json.dumps(request.transform_rule) if request.transform_rule is not None else None
 
     row = await db.fetchrow(
         """
         INSERT INTO crm_field_mappings
             (org_id, client_id, canonical_object, canonical_field,
-             hubspot_object, hubspot_property, transform_rule)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+             hubspot_object, hubspot_property)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (org_id, client_id, canonical_object, canonical_field)
         DO UPDATE SET
             hubspot_object = EXCLUDED.hubspot_object,
             hubspot_property = EXCLUDED.hubspot_property,
-            transform_rule = EXCLUDED.transform_rule,
             is_active = TRUE
         RETURNING id, org_id, client_id, canonical_object, canonical_field,
                   hubspot_object, hubspot_property, transform_rule,
@@ -66,7 +64,6 @@ async def set_field_mapping(
         request.canonical_field,
         request.hubspot_object,
         request.hubspot_property,
-        transform_json,
     )
     if row is None:
         raise HTTPException(

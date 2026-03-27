@@ -154,9 +154,10 @@ class HubSpotClient:
         data = await hs.list_objects("contacts", properties=["email"])
     """
 
-    def __init__(self, connection_id: str) -> None:
+    def __init__(self, connection_id: str, http_client: httpx.AsyncClient | None = None) -> None:
         self._connection_id = connection_id
         self._cached_token: str | None = None
+        self._http_client = http_client
 
     # -- Token management ---------------------------------------------------
 
@@ -200,8 +201,8 @@ class HubSpotClient:
                 "Content-Type": "application/json",
             }
 
-            async with httpx.AsyncClient() as client:
-                response = await client.request(
+            if self._http_client is not None:
+                response = await self._http_client.request(
                     method,
                     url,
                     params=params,
@@ -209,6 +210,16 @@ class HubSpotClient:
                     headers=headers,
                     timeout=30.0,
                 )
+            else:
+                async with httpx.AsyncClient() as client:
+                    response = await client.request(
+                        method,
+                        url,
+                        params=params,
+                        json=json_body,
+                        headers=headers,
+                        timeout=30.0,
+                    )
 
             _record_request(self._connection_id)
 
@@ -234,18 +245,22 @@ class HubSpotClient:
         self,
         path: str,
         params: dict[str, Any] | None = None,
+        *,
+        max_pages: int = 50,
     ) -> AsyncGenerator[list[dict[str, Any]], None]:
         """Yield pages of results following HubSpot's ``paging.next.after`` cursor."""
         params = dict(params or {})
+        pages_fetched = 0
         while True:
             data = await self._request("GET", path, params=params)
             results = data.get("results", [])
             if results:
                 yield results
+            pages_fetched += 1
             next_after = (
                 data.get("paging", {}).get("next", {}).get("after")
             )
-            if not next_after:
+            if not next_after or pages_fetched >= max_pages:
                 break
             params["after"] = next_after
 
@@ -253,10 +268,12 @@ class HubSpotClient:
         self,
         path: str,
         params: dict[str, Any] | None = None,
+        *,
+        max_pages: int = 50,
     ) -> list[dict[str, Any]]:
-        """Collect all pages into a flat list."""
+        """Collect all pages into a flat list (capped at max_pages)."""
         all_results: list[dict[str, Any]] = []
-        async for page in self._paginate(path, params):
+        async for page in self._paginate(path, params, max_pages=max_pages):
             all_results.extend(page)
         return all_results
 
@@ -357,7 +374,7 @@ class HubSpotClient:
     # -- Pipelines ----------------------------------------------------------
 
     async def list_pipelines(self, object_type: str) -> list[dict[str, Any]]:
-        data = await self._request("GET", f"/crm/v1/pipelines/{object_type}")
+        data = await self._request("GET", f"/crm/v3/pipelines/{object_type}")
         return list(data.get("results", []))
 
     # -- Lists --------------------------------------------------------------

@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
+from app.auth.context import AuthContext, ROLE_PERMISSIONS
 from app.services.hubspot import (
     HubSpotAPIError,
     HubSpotClient,
     _parse_hubspot_error,
     _record_request,
     _rate_tracker,
+    resolve_connection,
 )
 
 
@@ -149,6 +153,28 @@ class TestHubSpotClient:
             assert exc_info.value.category == "VALIDATION_ERROR"
 
     @pytest.mark.asyncio
+    async def test_request_with_shared_http_client(self, hubspot_search_response):
+        """When an http_client is passed, it should be used instead of creating a new one."""
+        mock_http = AsyncMock()
+        mock_response = MagicMock(spec=httpx.Response)
+        mock_response.status_code = 200
+        mock_response.text = '{"results": []}'
+        mock_response.json.return_value = hubspot_search_response
+        mock_http.request = AsyncMock(return_value=mock_response)
+
+        client = HubSpotClient("conn-1", http_client=mock_http)
+
+        with patch(
+            "app.services.hubspot.token_manager.get_valid_token",
+            new_callable=AsyncMock,
+            return_value="test-token",
+        ):
+            result = await client._request("GET", "/crm/v3/objects/contacts")
+
+        assert result["total"] == 2
+        mock_http.request.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_list_objects(self):
         client = HubSpotClient("conn-1")
         expected = {"results": [{"id": "1"}], "paging": {}}
@@ -192,3 +218,152 @@ class TestRateTracking:
         for _ in range(10):
             _record_request("test-conn")
         assert len(_rate_tracker["test-conn"]) == 10
+
+
+# ---------------------------------------------------------------------------
+# Pagination + max_pages tests (item 15)
+# ---------------------------------------------------------------------------
+
+
+class TestPagination:
+    @pytest.mark.asyncio
+    async def test_multi_page_pagination(self):
+        """_paginate should follow paging.next.after cursor across pages."""
+        client = HubSpotClient("conn-1")
+        call_count = 0
+
+        async def mock_request(method, path, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {
+                    "results": [{"id": "1"}, {"id": "2"}],
+                    "paging": {"next": {"after": "2"}},
+                }
+            return {
+                "results": [{"id": "3"}],
+                "paging": {},
+            }
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            all_results = await client._fetch_all("/crm/v3/objects/contacts")
+
+        assert len(all_results) == 3
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_empty_pagination(self):
+        """Empty results should return empty list."""
+        client = HubSpotClient("conn-1")
+
+        async def mock_request(method, path, **kwargs):
+            return {"results": [], "paging": {}}
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            all_results = await client._fetch_all("/crm/v3/objects/contacts")
+
+        assert all_results == []
+
+    @pytest.mark.asyncio
+    async def test_max_pages_limit(self):
+        """_fetch_all should stop at max_pages."""
+        client = HubSpotClient("conn-1")
+        call_count = 0
+
+        async def mock_request(method, path, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return {
+                "results": [{"id": str(call_count)}],
+                "paging": {"next": {"after": str(call_count)}},
+            }
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            all_results = await client._fetch_all(
+                "/crm/v3/objects/contacts", max_pages=3
+            )
+
+        assert len(all_results) == 3
+        assert call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# resolve_connection tests (item 15)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveConnection:
+    @pytest.mark.asyncio
+    async def test_connection_found(self):
+        auth = AuthContext(
+            org_id="00000000-0000-0000-0000-000000000001",
+            user_id="00000000-0000-0000-0000-000000000010",
+            role="org_admin",
+            permissions=ROLE_PERMISSIONS["org_admin"],
+            client_id=None,
+            auth_method="api_token",
+        )
+        client_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+        mock_db = AsyncMock()
+        mock_db.fetchrow = AsyncMock(
+            return_value={"nango_connection_id": "nango-conn-123"}
+        )
+
+        result = await resolve_connection(auth, client_id, mock_db)
+        assert result == "nango-conn-123"
+
+    @pytest.mark.asyncio
+    async def test_connection_not_found(self):
+        auth = AuthContext(
+            org_id="00000000-0000-0000-0000-000000000001",
+            user_id="00000000-0000-0000-0000-000000000010",
+            role="org_admin",
+            permissions=ROLE_PERMISSIONS["org_admin"],
+            client_id=None,
+            auth_method="api_token",
+        )
+        client_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+        mock_db = AsyncMock()
+        mock_db.fetchrow = AsyncMock(return_value=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await resolve_connection(auth, client_id, mock_db)
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_connection_wrong_org(self):
+        """resolve_connection filters by org_id — different org should 404."""
+        auth = AuthContext(
+            org_id="00000000-0000-0000-0000-000000000099",  # different org
+            user_id="00000000-0000-0000-0000-000000000010",
+            role="org_admin",
+            permissions=ROLE_PERMISSIONS["org_admin"],
+            client_id=None,
+            auth_method="api_token",
+        )
+        client_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+        mock_db = AsyncMock()
+        mock_db.fetchrow = AsyncMock(return_value=None)  # wrong org → no match
+
+        with pytest.raises(HTTPException) as exc_info:
+            await resolve_connection(auth, client_id, mock_db)
+        assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Pipelines v3 test (item 2)
+# ---------------------------------------------------------------------------
+
+
+class TestPipelinesV3:
+    @pytest.mark.asyncio
+    async def test_list_pipelines_uses_v3(self):
+        client = HubSpotClient("conn-1")
+
+        with patch.object(client, "_request", new_callable=AsyncMock, return_value={"results": []}) as mock_req:
+            await client.list_pipelines("deals")
+
+        mock_req.assert_called_once_with("GET", "/crm/v3/pipelines/deals")

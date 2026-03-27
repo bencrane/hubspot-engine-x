@@ -20,7 +20,6 @@ class SetFieldMappingRequest(BaseModel):
     canonical_field: str
     hubspot_object: str
     hubspot_property: str
-    transform_rule: dict[str, Any] | None = None
 
 
 class GetFieldMappingsRequest(BaseModel):
