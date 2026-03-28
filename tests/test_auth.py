@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
 
 from app.auth.context import AuthContext, ROLE_PERMISSIONS
@@ -27,8 +28,16 @@ ORG_ID = str(uuid4())
 USER_ID = str(uuid4())
 CLIENT_ID = str(uuid4())
 TOKEN_ID = str(uuid4())
-JWT_SECRET = "test-jwt-secret-long-enough-32chars!"
 SUPER_ADMIN_SECRET = "test-super-admin-secret-long-32!!"
+
+_TEST_PRIVATE_KEY = Ed25519PrivateKey.generate()
+_TEST_PUBLIC_KEY = _TEST_PRIVATE_KEY.public_key()
+
+
+def _mock_signing_key():
+    key = MagicMock()
+    key.key = _TEST_PUBLIC_KEY
+    return key
 
 
 def _make_request(token: str) -> MagicMock:
@@ -43,17 +52,21 @@ def _make_request_no_auth() -> MagicMock:
     return request
 
 
-def _make_jwt(claims: dict, secret: str = JWT_SECRET) -> str:
-    return jwt.encode(claims, secret, algorithm="HS256")
+def _make_jwt(claims: dict, private_key=None) -> str:
+    if private_key is None:
+        private_key = _TEST_PRIVATE_KEY
+    return jwt.encode(claims, private_key, algorithm="EdDSA")
 
 
 def _valid_jwt_claims(**overrides: object) -> dict:
     claims = {
         "org_id": ORG_ID,
-        "user_id": USER_ID,
+        "sub": USER_ID,
         "role": "org_admin",
         "client_id": None,
         "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+        "iss": "https://api.authengine.dev",
+        "aud": "https://api.authengine.dev",
     }
     claims.update(overrides)
     return claims
@@ -127,11 +140,7 @@ class TestAPITokenAuth:
         mock_pool = _make_pool_with_row(_token_db_row())
 
         request = _make_request(raw_token)
-        with (
-            patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
-        ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+        with patch("app.auth.dependencies.get_pool", return_value=mock_pool):
             auth = await get_current_auth(request)
 
         assert auth.org_id == ORG_ID
@@ -142,7 +151,7 @@ class TestAPITokenAuth:
 
     @pytest.mark.asyncio
     async def test_inactive_token_falls_through_to_jwt(self):
-        """Token not found in DB → falls through to JWT parsing."""
+        """Token not found in DB -> falls through to JWT parsing."""
         raw_token = _make_jwt(_valid_jwt_claims())
         request = _make_request(raw_token)
 
@@ -150,9 +159,9 @@ class TestAPITokenAuth:
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             auth = await get_current_auth(request)
 
         assert auth.auth_method == "session"
@@ -173,9 +182,9 @@ class TestJWTAuth:
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             auth = await get_current_auth(request)
 
         assert auth.org_id == ORG_ID
@@ -192,9 +201,9 @@ class TestJWTAuth:
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_auth(request)
             assert exc_info.value.status_code == 401
@@ -210,9 +219,9 @@ class TestJWTAuth:
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_auth(request)
             assert exc_info.value.status_code == 401
@@ -226,24 +235,25 @@ class TestJWTAuth:
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_auth(request)
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_wrong_signing_secret(self):
-        token = _make_jwt(_valid_jwt_claims(), secret="wrong-secret-that-is-32-chars!!")
+    async def test_wrong_signing_key(self):
+        wrong_key = Ed25519PrivateKey.generate()
+        token = _make_jwt(_valid_jwt_claims(), private_key=wrong_key)
         request = _make_request(token)
         mock_pool = _make_pool_with_row(None)
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             with pytest.raises(HTTPException) as exc_info:
                 await get_current_auth(request)
             assert exc_info.value.status_code == 401
@@ -257,9 +267,9 @@ class TestJWTAuth:
 
         with (
             patch("app.auth.dependencies.get_pool", return_value=mock_pool),
-            patch("app.auth.dependencies.settings") as mock_settings,
+            patch("app.auth.dependencies._jwks_client") as mock_jwks,
         ):
-            mock_settings.JWT_SECRET = JWT_SECRET
+            mock_jwks.get_signing_key_from_jwt.return_value = _mock_signing_key()
             auth = await get_current_auth(request)
 
         assert auth.client_id == CLIENT_ID
@@ -387,7 +397,7 @@ class TestClientAccess:
 
     @pytest.mark.asyncio
     async def test_company_user_own_client(self):
-        """Company-scoped user accessing their own client — allowed."""
+        """Company-scoped user accessing their own client -- allowed."""
         auth = AuthContext(
             org_id=ORG_ID,
             user_id=USER_ID,

@@ -6,11 +6,17 @@ from collections.abc import Callable
 import asyncpg
 import jwt
 from fastapi import Depends, HTTPException, Request, status
-from jwt import InvalidTokenError
+from jwt import InvalidTokenError, PyJWKClient
 
 from app.auth.context import AuthContext, ROLE_PERMISSIONS
 from app.config import settings
 from app.db import get_pool
+
+_jwks_client = PyJWKClient(
+    "https://api.authengine.dev/api/auth/jwks",
+    cache_jwk_set=True,
+    lifespan=300,
+)
 
 
 def _extract_bearer_token(request: Request) -> str:
@@ -86,11 +92,14 @@ async def get_current_auth(request: Request) -> AuthContext:
         )
 
     try:
+        signing_key = _jwks_client.get_signing_key_from_jwt(token)
         claims = jwt.decode(
             token,
-            settings.JWT_SECRET,
-            algorithms=["HS256"],
-            options={"require": ["exp"]},
+            signing_key.key,
+            algorithms=["EdDSA"],
+            issuer="https://api.authengine.dev",
+            audience="https://api.authengine.dev",
+            options={"require": ["exp", "sub", "org_id", "role"]},
         )
     except InvalidTokenError:
         raise HTTPException(
@@ -99,7 +108,7 @@ async def get_current_auth(request: Request) -> AuthContext:
         ) from None
 
     org_id = claims.get("org_id")
-    user_id = claims.get("user_id")
+    user_id = claims.get("sub")
     role = claims.get("role")
     client_id = claims.get("client_id")
 
