@@ -16,7 +16,6 @@ import pytest
 
 # Set env vars BEFORE importing app modules
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
-os.environ.setdefault("JWT_SECRET", "test-jwt-secret-long-enough-32chars!")
 os.environ.setdefault("SUPER_ADMIN_JWT_SECRET", "test-super-admin-secret-long-32!!")
 os.environ.setdefault("HUBSPOT_CLIENT_ID", "test-client-id")
 os.environ.setdefault("HUBSPOT_CLIENT_SECRET", "test-client-secret")

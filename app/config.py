@@ -5,7 +5,6 @@ class Settings(BaseSettings):
     APP_NAME: str = "hubspot-engine-x"
 
     DATABASE_URL: str
-    JWT_SECRET: str
     SUPER_ADMIN_JWT_SECRET: str
     HUBSPOT_CLIENT_ID: str
     HUBSPOT_CLIENT_SECRET: str
