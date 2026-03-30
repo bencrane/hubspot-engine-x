@@ -14,9 +14,8 @@ A multi-tenant API service for programmatic HubSpot administration. Organization
 | Deployment | Railway (Dockerfile) | Docker build, SSL, auto-deploy on push to main |
 | Database | Supabase Postgres via asyncpg | Direct async connection pool, no ORM overhead |
 | Secrets | Doppler | Centralized secrets management, injected at runtime |
-| Auth | API tokens (SHA-256 hash) + JWT (HS256) | Machine-to-machine (tokens) and user sessions (JWT) |
+| Auth | API tokens (SHA-256 hash) + JWT (EdDSA via JWKS) | Machine-to-machine (tokens) and user sessions (JWT verified via auth-engine-x) |
 | OAuth | Nango | Manages HubSpot OAuth flow, token storage, automatic refresh |
-| Password Hashing | bcrypt (direct) | No passlib — direct bcrypt library |
 | HTTP Client | httpx | Async HTTP for HubSpot and Nango API calls |
 | External API | HubSpot CRM API v3 | All CRM operations via stored OAuth tokens in Nango |
 
@@ -115,11 +114,11 @@ Tenant integrity triggers on all child tables enforce that `client_id` belongs t
 - Query enforces both `t.is_active = TRUE` and `u.is_active = TRUE` (token and user must both be active)
 - Used by: data-engine-x, trigger.dev tasks, external integrations
 
-**JWT Sessions** (user login):
-- Issued on login, signed with `JWT_SECRET` (HS256)
-- Contains: `org_id`, `user_id`, `role`, `client_id`, `exp`
-- `exp` claim is required — tokens without expiry are rejected
-- Required claims validated: `org_id`, `user_id`, `role` must all be present
+**JWT Sessions** (user sessions via auth-engine-x):
+- Issued by auth-engine-x, verified here via EdDSA/JWKS (`https://api.authengine.dev/api/auth/jwks`)
+- This service does not issue JWTs — it only verifies them
+- Required claims: `exp`, `sub` (mapped to user_id), `org_id`, `role`
+- Issuer and audience validated as `https://api.authengine.dev`
 - Unknown roles (not in ROLE_PERMISSIONS) are rejected
 - Used by: admin frontend, user-facing interfaces
 
@@ -135,7 +134,7 @@ class AuthContext:
     role: str              # org_admin, company_admin, company_member
     permissions: list[str] # derived from role via ROLE_PERMISSIONS
     client_id: str | None  # set for company-scoped users
-    auth_method: str       # "api_token" or "session"
+    auth_method: str       # "api_token", "session", or "super_admin"
 ```
 
 ### RBAC

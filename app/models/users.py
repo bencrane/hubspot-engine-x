@@ -2,14 +2,13 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class CreateUserRequest(BaseModel):
     email: str
     name: str | None = None
     role: Literal["org_admin", "company_admin", "company_member"]
-    password: str = Field(min_length=8)
     client_id: UUID | None = None
 
 

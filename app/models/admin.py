@@ -27,7 +27,6 @@ class AdminCreateUserRequest(BaseModel):
     email: str
     name: str | None = None
     role: Literal["org_admin", "company_admin", "company_member"]
-    password: str = Field(min_length=8)
     client_id: UUID | None = None
 
 
