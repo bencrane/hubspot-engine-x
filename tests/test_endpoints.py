@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 # Set env vars BEFORE importing app modules
@@ -233,6 +234,98 @@ class TestSuperAdmin:
             },
         )
         assert resp.status_code == 200
+
+    def test_create_org_with_id(self, super_admin_client, mock_conn):
+        specified_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        now = datetime.now(timezone.utc)
+        mock_conn.fetchrow = AsyncMock(return_value={
+            "id": uuid.UUID(specified_id),
+            "name": "External Org",
+            "slug": "external-org",
+            "is_active": True,
+            "created_at": now,
+        })
+        resp = super_admin_client.post(
+            "/api/super-admin/orgs",
+            json={"id": specified_id, "name": "External Org", "slug": "external-org"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["id"] == specified_id
+
+    def test_create_org_duplicate_id(self, super_admin_client, mock_conn):
+        exc = Exception.__new__(asyncpg.UniqueViolationError)
+        exc.constraint_name = "organizations_pkey"
+        mock_conn.fetchrow = AsyncMock(side_effect=exc)
+        resp = super_admin_client.post(
+            "/api/super-admin/orgs",
+            json={"id": ORG_ID, "name": "Dup Org", "slug": "dup-org"},
+        )
+        assert resp.status_code == 409
+
+    def test_create_user_with_id(self, super_admin_client, mock_conn):
+        specified_user_id = "11111111-2222-3333-4444-555555555555"
+        now = datetime.now(timezone.utc)
+        call_count = 0
+
+        async def mock_fetchrow(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"id": uuid.UUID(ORG_ID)}  # org lookup
+            return {
+                "id": uuid.UUID(specified_user_id),
+                "org_id": uuid.UUID(ORG_ID),
+                "email": "external@example.com",
+                "name": "External User",
+                "role": "org_admin",
+                "client_id": None,
+                "is_active": True,
+                "created_at": now,
+            }
+
+        mock_conn.fetchrow = mock_fetchrow
+
+        resp = super_admin_client.post(
+            "/api/super-admin/users",
+            json={
+                "id": specified_user_id,
+                "org_id": ORG_ID,
+                "email": "external@example.com",
+                "name": "External User",
+                "role": "org_admin",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["id"] == specified_user_id
+
+    def test_create_user_duplicate_id(self, super_admin_client, mock_conn):
+        mock_conn.fetchrow = AsyncMock(return_value={"id": uuid.UUID(ORG_ID)})  # org lookup
+
+        exc = Exception.__new__(asyncpg.UniqueViolationError)
+        exc.constraint_name = "users_pkey"
+
+        call_count = 0
+        original_fetchrow = mock_conn.fetchrow
+
+        async def mock_fetchrow(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"id": uuid.UUID(ORG_ID)}  # org lookup
+            raise exc
+
+        mock_conn.fetchrow = mock_fetchrow
+
+        resp = super_admin_client.post(
+            "/api/super-admin/users",
+            json={
+                "id": USER_ID,
+                "org_id": ORG_ID,
+                "email": "dup@example.com",
+                "role": "org_admin",
+            },
+        )
+        assert resp.status_code == 409
 
 
 # ---------------------------------------------------------------------------
