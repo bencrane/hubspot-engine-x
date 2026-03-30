@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class CreateOrgRequest(BaseModel):
+    id: UUID | None = None
     name: str
     slug: str = Field(
         pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$",
@@ -23,6 +24,7 @@ class OrgResponse(BaseModel):
 
 
 class AdminCreateUserRequest(BaseModel):
+    id: UUID | None = None
     org_id: UUID
     email: str
     name: str | None = None

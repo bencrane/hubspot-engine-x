@@ -19,16 +19,33 @@ async def create_organization(
     db: asyncpg.Connection = Depends(get_db),
 ) -> OrgResponse:
     try:
-        row = await db.fetchrow(
-            """
-            INSERT INTO organizations (name, slug)
-            VALUES ($1, $2)
-            RETURNING id, name, slug, is_active, created_at
-            """,
-            request.name,
-            request.slug,
-        )
-    except asyncpg.UniqueViolationError:
+        if request.id is not None:
+            row = await db.fetchrow(
+                """
+                INSERT INTO organizations (id, name, slug)
+                VALUES ($1, $2, $3)
+                RETURNING id, name, slug, is_active, created_at
+                """,
+                request.id,
+                request.name,
+                request.slug,
+            )
+        else:
+            row = await db.fetchrow(
+                """
+                INSERT INTO organizations (name, slug)
+                VALUES ($1, $2)
+                RETURNING id, name, slug, is_active, created_at
+                """,
+                request.name,
+                request.slug,
+            )
+    except asyncpg.UniqueViolationError as e:
+        if e.constraint_name == "organizations_pkey":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Organization with this id already exists",
+            ) from None
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Organization with this slug already exists",
@@ -75,19 +92,39 @@ async def create_super_admin_user(
         )
 
     try:
-        row = await db.fetchrow(
-            """
-            INSERT INTO users (org_id, email, name, role, client_id)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, org_id, email, name, role, client_id, is_active, created_at
-            """,
-            request.org_id,
-            request.email,
-            request.name,
-            request.role,
-            request.client_id,
-        )
-    except asyncpg.UniqueViolationError:
+        if request.id is not None:
+            row = await db.fetchrow(
+                """
+                INSERT INTO users (id, org_id, email, name, role, client_id)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id, org_id, email, name, role, client_id, is_active, created_at
+                """,
+                request.id,
+                request.org_id,
+                request.email,
+                request.name,
+                request.role,
+                request.client_id,
+            )
+        else:
+            row = await db.fetchrow(
+                """
+                INSERT INTO users (org_id, email, name, role, client_id)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, org_id, email, name, role, client_id, is_active, created_at
+                """,
+                request.org_id,
+                request.email,
+                request.name,
+                request.role,
+                request.client_id,
+            )
+    except asyncpg.UniqueViolationError as e:
+        if e.constraint_name == "users_pkey":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this id already exists",
+            ) from None
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User with this email already exists in this organization",
