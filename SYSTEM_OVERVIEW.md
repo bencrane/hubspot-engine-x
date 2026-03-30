@@ -25,9 +25,8 @@ This is standalone infrastructure. It is not embedded in any product. Multiple p
 | Deployment | Railway (Dockerfile) | Docker build, SSL, auto-deploy on push to main |
 | Database | Supabase Postgres via asyncpg | Direct connection, async, no ORM overhead |
 | Secrets | Doppler | Centralized secrets management, injected at runtime |
-| Auth | API tokens (SHA-256 hash) + JWT (HS256) | Machine-to-machine (tokens) and user sessions (JWT) |
+| Auth | API tokens (SHA-256 hash) + JWT (EdDSA via JWKS) | Machine-to-machine (tokens) and user sessions (JWT verified via auth-engine-x) |
 | OAuth | Nango | Manages HubSpot OAuth flow, token storage, automatic refresh |
-| Password Hashing | bcrypt (direct) | No passlib — direct bcrypt library |
 | HTTP Client | httpx | Async HTTP for HubSpot and Nango API calls |
 | External API | HubSpot CRM API v3 | All CRM operations via stored OAuth tokens in Nango |
 
@@ -77,10 +76,12 @@ All child tables carry `org_id` for direct filtering without joins. Tenant integ
 - Looked up on each request → returns org_id, user_id, role
 - Query enforces both `t.is_active = TRUE` and `u.is_active = TRUE`
 
-**JWT Sessions** (user login):
-- Issued on login, signed with `JWT_SECRET` (HS256)
-- Contains: `org_id`, `user_id`, `role`, `client_id`, `exp`
-- `exp` claim required, required claims validated, unknown roles rejected
+**JWT Sessions** (user sessions via auth-engine-x):
+- Issued by auth-engine-x, verified here via EdDSA/JWKS (`https://api.authengine.dev/api/auth/jwks`)
+- This service does not issue JWTs — it only verifies them
+- Required claims: `exp`, `sub` (mapped to user_id), `org_id`, `role`
+- Issuer and audience validated as `https://api.authengine.dev`
+- Unknown roles (not in ROLE_PERMISSIONS) are rejected
 
 ### AuthContext
 
@@ -136,7 +137,7 @@ The `client_id` (UUID) is used as the Nango `connectionId`.
 |---|---|
 | `organizations` | Tenant orgs (RA, future firms) |
 | `clients` | Org's customers whose HubSpot is managed |
-| `users` | Org users with roles and bcrypt password hashes |
+| `users` | Org users with roles |
 | `api_tokens` | SHA-256 hashed machine-to-machine auth tokens |
 | `crm_connections` | Connection metadata — status, hub_domain, hubspot_portal_id, nango_connection_id (no tokens) |
 | `crm_topology_snapshots` | Versioned JSONB schema snapshots per client |
@@ -190,7 +191,6 @@ All secrets managed via Doppler.
 | Variable | Purpose |
 |---|---|
 | `DATABASE_URL` | Supabase Postgres direct connection string |
-| `JWT_SECRET` | JWT signing secret (HS256) |
 | `SUPER_ADMIN_JWT_SECRET` | Separate secret for super-admin bearer auth |
 | `HUBSPOT_CLIENT_ID` | HubSpot app client ID |
 | `HUBSPOT_CLIENT_SECRET` | HubSpot app client secret |

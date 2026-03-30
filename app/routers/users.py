@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth.context import AuthContext
 from app.auth.dependencies import require_permission
-from app.auth.passwords import hash_password
 from app.db import get_db
 from app.models.users import CreateUserRequest, ListUsersRequest, ListUsersResponse, UserResponse
 
@@ -39,19 +38,17 @@ async def create_user(
             detail="org_admin users must not have a client_id",
         )
 
-    password_hash = hash_password(request.password)
     try:
         row = await db.fetchrow(
             """
-            INSERT INTO users (org_id, email, name, role, password_hash, client_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO users (org_id, email, name, role, client_id)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING id, org_id, email, name, role, client_id, is_active, created_at, updated_at
             """,
             org_id,
             request.email,
             request.name,
             request.role,
-            password_hash,
             request.client_id,
         )
     except asyncpg.UniqueViolationError:

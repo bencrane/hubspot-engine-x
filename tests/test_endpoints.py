@@ -230,7 +230,6 @@ class TestSuperAdmin:
                 "email": "test@example.com",
                 "name": "Test User",
                 "role": "org_admin",
-                "password": "securepassword123",
             },
         )
         assert resp.status_code == 200
@@ -253,46 +252,6 @@ class TestAuthEndpoints:
         resp = noauth_client.get("/api/auth/me")
         assert resp.status_code == 401
 
-    def test_login(self, admin_client, mock_conn):
-        from app.auth.passwords import hash_password
-
-        pw_hash = hash_password("testpassword123")
-        mock_conn.fetch = AsyncMock(return_value=[{
-            "id": uuid.UUID(USER_ID),
-            "org_id": uuid.UUID(ORG_ID),
-            "email": "test@example.com",
-            "name": "Test",
-            "role": "org_admin",
-            "client_id": None,
-            "password_hash": pw_hash,
-        }])
-
-        resp = admin_client.post(
-            "/api/auth/login",
-            json={"email": "test@example.com", "password": "testpassword123"},
-        )
-        assert resp.status_code == 200
-        assert "token" in resp.json()
-
-    def test_login_wrong_password(self, admin_client, mock_conn):
-        from app.auth.passwords import hash_password
-
-        pw_hash = hash_password("correctpassword")
-        mock_conn.fetch = AsyncMock(return_value=[{
-            "id": uuid.UUID(USER_ID),
-            "org_id": uuid.UUID(ORG_ID),
-            "email": "test@example.com",
-            "name": "Test",
-            "role": "org_admin",
-            "client_id": None,
-            "password_hash": pw_hash,
-        }])
-
-        resp = admin_client.post(
-            "/api/auth/login",
-            json={"email": "test@example.com", "password": "wrongpassword"},
-        )
-        assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +335,6 @@ class TestUserEndpoints:
                 "email": "new@example.com",
                 "name": "New User",
                 "role": "org_admin",
-                "password": "securepass123",
             },
         )
         assert resp.status_code == 200
@@ -392,7 +350,6 @@ class TestUserEndpoints:
             json={
                 "email": "test@test.com",
                 "role": "org_admin",
-                "password": "securepass123",
             },
         )
         assert resp.status_code == 403

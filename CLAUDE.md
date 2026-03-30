@@ -40,9 +40,8 @@ All operations are scoped by org_id and client_id. An org never sees another org
 | Deployment | Railway (Dockerfile) | Docker build, SSL, auto-deploy on push to main |
 | Database | Supabase Postgres via asyncpg | Direct connection, async, no ORM overhead |
 | Secrets | Doppler | Centralized secrets management, injected at runtime |
-| Auth | API tokens (SHA-256 hash) + JWT (HS256) | Machine-to-machine (tokens) and user sessions (JWT) |
+| Auth | API tokens (SHA-256 hash) + JWT (EdDSA via JWKS) | Machine-to-machine (tokens) and user sessions (JWT verified via auth-engine-x) |
 | OAuth | Nango | Manages HubSpot OAuth flow, token storage, automatic refresh |
-| Password Hashing | bcrypt (direct) | No passlib — direct bcrypt library |
 | HTTP Client | httpx | Async HTTP for HubSpot and Nango API calls |
 | External API | HubSpot CRM API v3 | All CRM operations via stored OAuth tokens in Nango |
 
@@ -87,11 +86,11 @@ Child tables include `org_id` even when they reference a parent that already has
 - Query enforces both `t.is_active = TRUE` and `u.is_active = TRUE`
 - Used by: data-engine-x, trigger.dev tasks, external integrations
 
-**JWT Sessions** (user login):
-- Issued on login, signed with `JWT_SECRET` (HS256)
-- Contains: `org_id`, `user_id`, `role`, `client_id`, `exp`
-- `exp` claim is required — tokens without expiry are rejected
-- Required claims validated: `org_id`, `user_id`, `role` must all be present
+**JWT Sessions** (user sessions via auth-engine-x):
+- Issued by auth-engine-x, verified here via EdDSA/JWKS (`https://api.authengine.dev/api/auth/jwks`)
+- This service does not issue JWTs — it only verifies them
+- Required claims: `exp`, `sub` (mapped to user_id), `org_id`, `role`
+- Issuer and audience validated as `https://api.authengine.dev`
 - Unknown roles (not in ROLE_PERMISSIONS) are rejected
 - Used by: admin frontend, user-facing interfaces
 
@@ -107,7 +106,7 @@ class AuthContext:
     role: str              # org_admin, company_admin, company_member
     permissions: list[str] # derived from role via ROLE_PERMISSIONS
     client_id: str | None  # set for company-scoped users
-    auth_method: str       # "api_token" or "session"
+    auth_method: str       # "api_token", "session", or "super_admin"
 ```
 
 ### RBAC
@@ -179,7 +178,6 @@ All tenant-scoped tables have `org_id` with NOT NULL constraint, foreign key, in
 - `POST /api/super-admin/users` — create a user in any org
 
 ### Auth
-- `POST /api/auth/login` — issue JWT session token
 - `GET /api/auth/me` — return current auth context with role and permissions
 
 ### Clients
@@ -251,8 +249,7 @@ hubspot-engine-x/
 │   ├── auth/
 │   │   ├── __init__.py
 │   │   ├── context.py        # AuthContext dataclass, ROLE_PERMISSIONS
-│   │   ├── dependencies.py   # get_current_auth, validate_client_access
-│   │   └── passwords.py      # bcrypt hash/verify
+│   │   └── dependencies.py   # get_current_auth, validate_client_access
 │   ├── middleware/
 │   │   ├── __init__.py
 │   │   └── logging.py        # Structured logging, correlation IDs, audit log
@@ -270,7 +267,7 @@ hubspot-engine-x/
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── admin.py           # Super-admin: org + user creation
-│   │   ├── auth.py            # Login + /me
+│   │   ├── auth.py            # /me endpoint
 │   │   ├── clients.py         # Client CRUD
 │   │   ├── users.py           # User management
 │   │   ├── tokens.py          # API token lifecycle
@@ -311,7 +308,6 @@ All secrets managed via Doppler. On Railway, set `DOPPLER_TOKEN` only.
 
 ```
 DATABASE_URL=<supabase-postgres-connection-string>
-JWT_SECRET=<random-secret-for-signing-jwts>
 SUPER_ADMIN_JWT_SECRET=<separate-secret-for-super-admin-bearer-auth>
 HUBSPOT_CLIENT_ID=<hubspot-app-client-id>
 HUBSPOT_CLIENT_SECRET=<hubspot-app-client-secret>
